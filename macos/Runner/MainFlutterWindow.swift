@@ -10,6 +10,10 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    SecureFilePickerPlugin.register(
+      with: flutterViewController.registrar(forPlugin: "SecureFilePickerPlugin")
+    )
+
     super.awakeFromNib()
   }
 }

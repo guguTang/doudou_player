@@ -5,6 +5,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../models/subtitle_mode.dart';
 import '../models/video_item.dart';
 import '../services/library_service.dart';
+import '../services/secure_file_access.dart';
 import '../services/subtitle_parser_service.dart';
 import '../widgets/dual_subtitle_overlay.dart';
 import '../widgets/player_controls.dart';
@@ -45,6 +46,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _initialize() async {
     try {
+      final accessible = await widget.libraryService.ensureAccess(_item);
+      if (!accessible) {
+        _error = SecureFileAccess.enabled &&
+                _item.fileBookmark == null &&
+                _item.directoryBookmark == null
+            ? '无法访问该视频文件。请从列表中删除后重新添加（macOS 需重新选择文件授权）。'
+            : '无法访问该视频文件，请确认文件仍存在且有读取权限。';
+        return;
+      }
+
       await _loadSubtitles();
       await _player.open(Media(_item.filePath));
       await _player.setSubtitleTrack(SubtitleTrack.no());
@@ -75,15 +86,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _pickSubtitle({required bool isChinese}) async {
-    final path = await widget.libraryService.pickSubtitleFile();
-    if (path == null) {
+    final picked = await widget.libraryService.pickSubtitleFile();
+    if (picked == null) {
       return;
     }
 
     await widget.libraryService.updateSubtitles(
       id: _item.id,
-      zhSubPath: isChinese ? path : null,
-      enSubPath: isChinese ? null : path,
+      zhSubPath: isChinese ? picked.path : null,
+      enSubPath: isChinese ? null : picked.path,
+      zhSubBookmark: isChinese ? picked.bookmark : null,
+      enSubBookmark: isChinese ? null : picked.bookmark,
     );
     await _refreshItem();
   }
@@ -110,31 +123,58 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  bool _released = false;
+
+  Future<void> _stopAndRelease() async {
+    if (_released) {
+      return;
+    }
+    _released = true;
+    await _player.pause();
+    await _player.stop();
+    await widget.libraryService.releaseAccess();
+    await _player.dispose();
+  }
+
   @override
   void dispose() {
-    _player.dispose();
+    if (!_released) {
+      _stopAndRelease();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(child: _buildVideoArea()),
-            PlayerControls(
-              player: _player,
-              subtitleLabel: _subtitleMode.label,
-              onSubtitlePressed: _cycleSubtitleMode,
-              onPickZhSubtitle: () => _pickSubtitle(isChinese: true),
-              onPickEnSubtitle: () => _pickSubtitle(isChinese: false),
-              hasZhSubtitle: _item.zhSubPath != null,
-              hasEnSubtitle: _item.enSubPath != null,
-            ),
-          ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) {
+          return;
+        }
+        await _stopAndRelease();
+        if (context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              Expanded(child: _buildVideoArea()),
+              PlayerControls(
+                player: _player,
+                subtitleLabel: _subtitleMode.label,
+                onSubtitlePressed: _cycleSubtitleMode,
+                onPickZhSubtitle: () => _pickSubtitle(isChinese: true),
+                onPickEnSubtitle: () => _pickSubtitle(isChinese: false),
+                hasZhSubtitle: _item.zhSubPath != null,
+                hasEnSubtitle: _item.enSubPath != null,
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -106,19 +106,21 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
 
     switch (action) {
       case 'zh':
-        final path = await widget.libraryService.pickSubtitleFile();
-        if (path != null) {
+        final picked = await widget.libraryService.pickSubtitleFile();
+        if (picked != null) {
           await widget.libraryService.updateSubtitles(
             id: item.id,
-            zhSubPath: path,
+            zhSubPath: picked.path,
+            zhSubBookmark: picked.bookmark,
           );
         }
       case 'en':
-        final path = await widget.libraryService.pickSubtitleFile();
-        if (path != null) {
+        final picked = await widget.libraryService.pickSubtitleFile();
+        if (picked != null) {
           await widget.libraryService.updateSubtitles(
             id: item.id,
-            enSubPath: path,
+            enSubPath: picked.path,
+            enSubBookmark: picked.bookmark,
           );
         }
       case 'delete':

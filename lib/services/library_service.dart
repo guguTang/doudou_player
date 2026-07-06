@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/video_item.dart';
+import 'macos_secure_picker.dart';
 import 'secure_file_access.dart';
 import 'subtitle_matcher.dart';
 
@@ -45,20 +46,24 @@ class LibraryService extends ChangeNotifier {
 
   Future<VideoItem> _withBookmarks(
     String path, {
+    String? fileBookmark,
     String? directoryBookmark,
     String? zhPath,
     String? enPath,
   }) async {
-    final fileBookmark = await _secureAccess.createBookmark(path);
-    final zhSubBookmark =
-        zhPath != null ? await _secureAccess.createBookmark(zhPath) : null;
-    final enSubBookmark =
-        enPath != null ? await _secureAccess.createBookmark(enPath) : null;
+    final resolvedFileBookmark =
+        fileBookmark ?? await _secureAccess.createBookmark(path);
+    final zhSubBookmark = zhPath != null
+        ? await _secureAccess.createBookmark(zhPath)
+        : null;
+    final enSubBookmark = enPath != null
+        ? await _secureAccess.createBookmark(enPath)
+        : null;
 
     return VideoItem.fromPath(path).copyWith(
       zhSubPath: zhPath,
       enSubPath: enPath,
-      fileBookmark: fileBookmark,
+      fileBookmark: resolvedFileBookmark,
       directoryBookmark: directoryBookmark,
       zhSubBookmark: zhSubBookmark,
       enSubBookmark: enSubBookmark,
@@ -99,6 +104,41 @@ class LibraryService extends ChangeNotifier {
   }
 
   Future<int> pickAndAddVideos() async {
+    if (MacosSecurePicker.isSupported) {
+      final picked = await MacosSecurePicker.pickVideos();
+      if (picked.isEmpty) {
+        return 0;
+      }
+
+      var added = 0;
+      for (final file in picked) {
+        if (!SubtitleMatcher.isVideoFile(file.path)) {
+          continue;
+        }
+        if (_items.any((item) => item.filePath == file.path)) {
+          continue;
+        }
+
+        final match = SubtitleMatcher.findSubtitles(file.path);
+        _items.add(
+          await _withBookmarks(
+            file.path,
+            fileBookmark: file.bookmark,
+            zhPath: match.zhPath,
+            enPath: match.enPath,
+          ),
+        );
+        added++;
+      }
+
+      if (added > 0) {
+        _items.sort((a, b) => b.addedAt.compareTo(a.addedAt));
+        await _save();
+        notifyListeners();
+      }
+      return added;
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v'],
@@ -115,6 +155,28 @@ class LibraryService extends ChangeNotifier {
   }
 
   Future<int> pickAndScanDirectory() async {
+    if (MacosSecurePicker.isSupported) {
+      final picked = await MacosSecurePicker.pickDirectory();
+      if (picked == null) {
+        return 0;
+      }
+
+      await _secureAccess.startAccess(
+        bookmark: picked.bookmark,
+        fallbackPath: picked.path,
+        isDirectory: true,
+      );
+
+      final videos = SubtitleMatcher.scanVideosInDirectory(picked.path);
+      final added = await addVideoPaths(
+        videos,
+        directoryBookmark: picked.bookmark,
+      );
+
+      await _secureAccess.stopAll();
+      return added;
+    }
+
     final directoryPath = await FilePicker.platform.getDirectoryPath();
     if (directoryPath == null) {
       return 0;
@@ -148,6 +210,8 @@ class LibraryService extends ChangeNotifier {
     required String id,
     String? zhSubPath,
     String? enSubPath,
+    String? zhSubBookmark,
+    String? enSubBookmark,
     bool clearZh = false,
     bool clearEn = false,
   }) async {
@@ -156,20 +220,20 @@ class LibraryService extends ChangeNotifier {
       return;
     }
 
-    String? zhSubBookmark;
-    String? enSubBookmark;
-    if (zhSubPath != null) {
-      zhSubBookmark = await _secureAccess.createBookmark(zhSubPath);
+    String? resolvedZhBookmark = zhSubBookmark;
+    String? resolvedEnBookmark = enSubBookmark;
+    if (zhSubPath != null && resolvedZhBookmark == null) {
+      resolvedZhBookmark = await _secureAccess.createBookmark(zhSubPath);
     }
-    if (enSubPath != null) {
-      enSubBookmark = await _secureAccess.createBookmark(enSubPath);
+    if (enSubPath != null && resolvedEnBookmark == null) {
+      resolvedEnBookmark = await _secureAccess.createBookmark(enSubPath);
     }
 
     _items[index] = _items[index].copyWith(
       zhSubPath: zhSubPath,
       enSubPath: enSubPath,
-      zhSubBookmark: zhSubBookmark,
-      enSubBookmark: enSubBookmark,
+      zhSubBookmark: resolvedZhBookmark,
+      enSubBookmark: resolvedEnBookmark,
       clearZhSubPath: clearZh,
       clearEnSubPath: clearEn,
       clearZhSubBookmark: clearZh,
@@ -179,7 +243,11 @@ class LibraryService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String?> pickSubtitleFile() async {
+  Future<PickedFileAccess?> pickSubtitleFile() async {
+    if (MacosSecurePicker.isSupported) {
+      return MacosSecurePicker.pickSubtitle();
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['srt'],
@@ -190,7 +258,11 @@ class LibraryService extends ChangeNotifier {
     if (result == null || result.files.isEmpty) {
       return null;
     }
-    return result.files.single.path;
+    final path = result.files.single.path;
+    if (path == null) {
+      return null;
+    }
+    return PickedFileAccess(path: path);
   }
 
   Future<void> removeVideo(String id) async {
@@ -213,6 +285,11 @@ class LibraryService extends ChangeNotifier {
       return File(item.filePath).existsSync();
     }
 
+    if (item.fileBookmark == null && item.directoryBookmark == null) {
+      return false;
+    }
+
+    await _secureAccess.stopAll();
     await _secureAccess.startAccessForPaths(
       fileBookmark: item.fileBookmark,
       filePath: item.filePath,
@@ -223,7 +300,13 @@ class LibraryService extends ChangeNotifier {
       enSubPath: item.enSubPath,
     );
 
-    return File(item.filePath).existsSync();
+    try {
+      final file = File(item.filePath);
+      final length = await file.length();
+      return length >= 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> releaseAccess() async {
