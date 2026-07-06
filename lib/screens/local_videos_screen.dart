@@ -15,6 +15,9 @@ class LocalVideosScreen extends StatefulWidget {
 }
 
 class _LocalVideosScreenState extends State<LocalVideosScreen> {
+  final Set<String> _selectedIds = {};
+  bool _selecting = false;
+
   @override
   void initState() {
     super.initState();
@@ -29,8 +32,53 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
 
   void _onLibraryChanged() {
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _selectedIds.removeWhere(
+          (id) => widget.libraryService.findById(id) == null,
+        );
+        if (_selectedIds.isEmpty && _selecting) {
+          _selecting = false;
+        }
+      });
     }
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selecting = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _enterSelectionMode([String? initialId]) {
+    setState(() {
+      _selecting = true;
+      _selectedIds.clear();
+      if (initialId != null) {
+        _selectedIds.add(initialId);
+      }
+    });
+  }
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _selecting = false;
+        }
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _selectAll(List<VideoItem> items) {
+    setState(() {
+      _selectedIds
+        ..clear()
+        ..addAll(items.map((item) => item.id));
+    });
   }
 
   Future<void> _addVideos() async {
@@ -71,6 +119,45 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
     setState(() {});
   }
 
+  Future<void> _confirmBatchDelete() async {
+    if (_selectedIds.isEmpty) {
+      return;
+    }
+
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('确认移除'),
+          content: Text('确定从列表中移除 $count 个视频吗？\n（不会删除本地文件）'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('移除'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final removed = await widget.libraryService.removeVideos(_selectedIds);
+    if (!mounted) {
+      return;
+    }
+
+    _exitSelectionMode();
+    _showSnackBar('已移除 $removed 个视频');
+  }
+
   Future<void> _showItemActions(VideoItem item) async {
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -79,6 +166,11 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              ListTile(
+                leading: const Icon(Icons.checklist),
+                title: const Text('多选'),
+                onTap: () => Navigator.pop(context, 'select'),
+              ),
               ListTile(
                 leading: const Icon(Icons.subtitles),
                 title: const Text('选择中文字幕'),
@@ -105,6 +197,8 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
     }
 
     switch (action) {
+      case 'select':
+        _enterSelectionMode(item.id);
       case 'zh':
         final picked = await widget.libraryService.pickSubtitleFile();
         if (picked != null) {
@@ -163,14 +257,75 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
     }
   }
 
+  PreferredSizeWidget _buildAppBar(List<VideoItem> items) {
+    if (!_selecting) {
+      return AppBar(
+        title: const Text('本地视频'),
+        actions: [
+          if (items.isNotEmpty)
+            IconButton(
+              tooltip: '多选',
+              onPressed: () => _enterSelectionMode(),
+              icon: const Icon(Icons.checklist),
+            ),
+        ],
+      );
+    }
+
+    final allSelected =
+        items.isNotEmpty && _selectedIds.length == items.length;
+
+    return AppBar(
+      leading: IconButton(
+        tooltip: '取消',
+        onPressed: _exitSelectionMode,
+        icon: const Icon(Icons.close),
+      ),
+      title: Text('已选 ${_selectedIds.length} 项'),
+      actions: [
+        TextButton(
+          onPressed: items.isEmpty
+              ? null
+              : () {
+                  if (allSelected) {
+                    setState(_selectedIds.clear);
+                  } else {
+                    _selectAll(items);
+                  }
+                },
+          child: Text(allSelected ? '取消全选' : '全选'),
+        ),
+      ],
+    );
+  }
+
+  Widget? _buildBottomBar() {
+    if (!_selecting) {
+      return null;
+    }
+
+    return BottomAppBar(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            TextButton.icon(
+              onPressed: _selectedIds.isEmpty ? null : _confirmBatchDelete,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('移除'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = widget.libraryService.items;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('本地视频'),
-      ),
+      appBar: _buildAppBar(items),
       body: !widget.libraryService.isLoaded
           ? const Center(child: CircularProgressIndicator())
           : items.isEmpty
@@ -194,15 +349,28 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
                     final item = items[index];
                     return VideoListTile(
                       item: item,
-                      onTap: () => _openPlayer(item),
-                      onLongPress: () => _showItemActions(item),
+                      selecting: _selecting,
+                      selected: _selectedIds.contains(item.id),
+                      onTap: () {
+                        if (_selecting) {
+                          _toggleSelection(item.id);
+                        } else {
+                          _openPlayer(item);
+                        }
+                      },
+                      onLongPress: _selecting
+                          ? null
+                          : () => _showItemActions(item),
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddMenu,
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: _selecting
+          ? null
+          : FloatingActionButton(
+              onPressed: _showAddMenu,
+              child: const Icon(Icons.add),
+            ),
+      bottomNavigationBar: _buildBottomBar(),
     );
   }
 }

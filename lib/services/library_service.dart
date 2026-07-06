@@ -266,9 +266,21 @@ class LibraryService extends ChangeNotifier {
   }
 
   Future<void> removeVideo(String id) async {
-    _items.removeWhere((item) => item.id == id);
-    await _save();
-    notifyListeners();
+    await removeVideos({id});
+  }
+
+  Future<int> removeVideos(Set<String> ids) async {
+    if (ids.isEmpty) {
+      return 0;
+    }
+    final before = _items.length;
+    _items.removeWhere((item) => ids.contains(item.id));
+    final removed = before - _items.length;
+    if (removed > 0) {
+      await _save();
+      notifyListeners();
+    }
+    return removed;
   }
 
   VideoItem? findById(String id) {

@@ -7,12 +7,16 @@ class VideoListTile extends StatelessWidget {
     super.key,
     required this.item,
     required this.onTap,
-    required this.onLongPress,
+    this.onLongPress,
+    this.selecting = false,
+    this.selected = false,
   });
 
   final VideoItem item;
   final VoidCallback onTap;
-  final VoidCallback onLongPress;
+  final VoidCallback? onLongPress;
+  final bool selecting;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -21,15 +25,25 @@ class VideoListTile extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      color: selected
+          ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.35)
+          : null,
       child: ListTile(
-        leading: const Icon(Icons.movie_outlined, size: 36),
+        leading: selecting
+            ? Checkbox(
+                value: selected,
+                onChanged: (_) => onTap(),
+              )
+            : const Icon(Icons.movie_outlined, size: 36),
         title: Text(
           item.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text('$zh  $en'),
-        trailing: const Icon(Icons.play_circle_outline),
+        trailing: selecting
+            ? null
+            : const Icon(Icons.play_circle_outline),
         onTap: onTap,
         onLongPress: onLongPress,
       ),
