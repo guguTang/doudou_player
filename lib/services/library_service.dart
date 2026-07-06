@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/video_item.dart';
+import 'secure_file_access.dart';
 import 'subtitle_matcher.dart';
 
 class LibraryService extends ChangeNotifier {
@@ -14,6 +16,7 @@ class LibraryService extends ChangeNotifier {
 
   final List<VideoItem> _items = [];
   bool _loaded = false;
+  final _secureAccess = SecureFileAccess.instance;
 
   List<VideoItem> get items => List.unmodifiable(_items);
   bool get isLoaded => _loaded;
@@ -40,7 +43,32 @@ class LibraryService extends ChangeNotifier {
     await prefs.setString(_storageKey, encoded);
   }
 
-  Future<int> addVideoPaths(List<String> paths) async {
+  Future<VideoItem> _withBookmarks(
+    String path, {
+    String? directoryBookmark,
+    String? zhPath,
+    String? enPath,
+  }) async {
+    final fileBookmark = await _secureAccess.createBookmark(path);
+    final zhSubBookmark =
+        zhPath != null ? await _secureAccess.createBookmark(zhPath) : null;
+    final enSubBookmark =
+        enPath != null ? await _secureAccess.createBookmark(enPath) : null;
+
+    return VideoItem.fromPath(path).copyWith(
+      zhSubPath: zhPath,
+      enSubPath: enPath,
+      fileBookmark: fileBookmark,
+      directoryBookmark: directoryBookmark,
+      zhSubBookmark: zhSubBookmark,
+      enSubBookmark: enSubBookmark,
+    );
+  }
+
+  Future<int> addVideoPaths(
+    List<String> paths, {
+    String? directoryBookmark,
+  }) async {
     var added = 0;
     for (final path in paths) {
       if (!SubtitleMatcher.isVideoFile(path)) {
@@ -52,9 +80,11 @@ class LibraryService extends ChangeNotifier {
 
       final match = SubtitleMatcher.findSubtitles(path);
       _items.add(
-        VideoItem.fromPath(path).copyWith(
-          zhSubPath: match.zhPath,
-          enSubPath: match.enPath,
+        await _withBookmarks(
+          path,
+          directoryBookmark: directoryBookmark,
+          zhPath: match.zhPath,
+          enPath: match.enPath,
         ),
       );
       added++;
@@ -90,8 +120,28 @@ class LibraryService extends ChangeNotifier {
       return 0;
     }
 
+    final directoryBookmark =
+        await _secureAccess.createBookmark(directoryPath, isDirectory: true);
+
+    if (SecureFileAccess.enabled && directoryBookmark != null) {
+      await _secureAccess.startAccess(
+        bookmark: directoryBookmark,
+        fallbackPath: directoryPath,
+        isDirectory: true,
+      );
+    }
+
     final videos = SubtitleMatcher.scanVideosInDirectory(directoryPath);
-    return addVideoPaths(videos);
+    final added = await addVideoPaths(
+      videos,
+      directoryBookmark: directoryBookmark,
+    );
+
+    if (SecureFileAccess.enabled && directoryBookmark != null) {
+      await _secureAccess.stopAll();
+    }
+
+    return added;
   }
 
   Future<void> updateSubtitles({
@@ -106,11 +156,24 @@ class LibraryService extends ChangeNotifier {
       return;
     }
 
+    String? zhSubBookmark;
+    String? enSubBookmark;
+    if (zhSubPath != null) {
+      zhSubBookmark = await _secureAccess.createBookmark(zhSubPath);
+    }
+    if (enSubPath != null) {
+      enSubBookmark = await _secureAccess.createBookmark(enSubPath);
+    }
+
     _items[index] = _items[index].copyWith(
       zhSubPath: zhSubPath,
       enSubPath: enSubPath,
+      zhSubBookmark: zhSubBookmark,
+      enSubBookmark: enSubBookmark,
       clearZhSubPath: clearZh,
       clearEnSubPath: clearEn,
+      clearZhSubBookmark: clearZh,
+      clearEnSubBookmark: clearEn,
     );
     await _save();
     notifyListeners();
@@ -143,5 +206,27 @@ class LibraryService extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  Future<bool> ensureAccess(VideoItem item) async {
+    if (!SecureFileAccess.enabled) {
+      return File(item.filePath).existsSync();
+    }
+
+    await _secureAccess.startAccessForPaths(
+      fileBookmark: item.fileBookmark,
+      filePath: item.filePath,
+      directoryBookmark: item.directoryBookmark,
+      zhSubBookmark: item.zhSubBookmark,
+      zhSubPath: item.zhSubPath,
+      enSubBookmark: item.enSubBookmark,
+      enSubPath: item.enSubPath,
+    );
+
+    return File(item.filePath).existsSync();
+  }
+
+  Future<void> releaseAccess() async {
+    await _secureAccess.stopAll();
   }
 }

@@ -41,6 +41,7 @@ dependencies:
   path: ^1.9.0
   shared_preferences: ^2.3.0
   subtitle: ^0.2.0
+  macos_secure_bookmarks: ^0.2.1
 
 dev_dependencies:
   flutter_test:
