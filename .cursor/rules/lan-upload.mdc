@@ -1,0 +1,41 @@
+---
+description: 局域网上传模块架构、约定与改动注意点
+globs: lib/**/*lan_upload*,lib/services/library_service.dart,lib/services/subtitle_matcher.dart,lib/services/settings_service.dart,lib/widgets/lan_upload_section.dart,lib/screens/settings_screen.dart,lib/app.dart,test/lan_upload_service_test.dart
+alwaysApply: false
+---
+
+# 局域网上传模块
+
+## 已实现能力
+
+- 设置页开关 HTTP 服务（默认端口 8765）、自动启动、PIN、本机 IP/URL 复制
+- 浏览器上传页（`lan_upload_page.dart` 内嵌 HTML）：拖拽多文件、PIN、进度、导入摘要
+- 文件写入 `ApplicationSupport/lan_uploads/`（沙盒可写，无需 macOS bookmark）
+- 视频 → `LibraryService.addVideoPaths`；单独字幕 → `attachUploadedSubtitles`（按 basename 跨目录匹配）
+- 配置持久化：`SettingsService.lanUploadSettings`，key=`lan_upload_settings`
+
+## 组件关系
+
+```
+app.dart: LanUploadService(libraryService, settingsService)
+  → MainShell → SettingsScreen → LanUploadSection
+LanUploadService → LanUploadStorage + shelf Router
+LibraryService.attachUploadedSubtitles ← SubtitleMatcher.parseSubtitleFileName
+```
+
+## 改动时必须遵守
+
+1. **路由**：`GET /`、`GET /api/status`、`POST /api/upload`；PIN 校验 `X-Upload-Token` 或 `?token=`
+2. **multipart**：用 `shelf_multipart` 的 `request.formData()`，字段名 `files`/`file`
+3. **安全**：文件名消毒（拒绝 `..` 和路径分隔符）、扩展名白名单、`SubtitleMatcher.isAllowedUploadFile`
+4. **生命周期**：`LanUploadService` 监听 settings 的 `enabled`/端口；`dispose` 时 `stop()`
+5. **测试**：用 `lanUpload.handler(Request(...))`，勿用 `HttpClient`；multipart 体用 `\r\n`；存储测试注入 `uploadDirectoryProvider`
+6. **平台**：macOS Release 需 `network.server`；Android `INTERNET`；iOS `NSLocalNetworkUsageDescription`
+
+## 勿重复实现
+
+- 视频导入逻辑已在 `addVideoPaths`（含字幕扫描、缩略图）
+- 字幕后缀规则读 `SettingsService.subtitleScanRules`，与扫描文件夹共用
+- 用户原路径视频的 sandbox bookmark 逻辑与上传目录无关
+
+详细文档见 `docs/lan-upload.md`；文档索引见 `docs/README.md`。

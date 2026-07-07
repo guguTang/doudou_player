@@ -1,26 +1,56 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/library_scan_progress.dart';
+import '../models/subtitle_scan_rules.dart';
 import '../models/video_item.dart';
+import 'library_path.dart';
 import 'macos_secure_picker.dart';
 import 'secure_file_access.dart';
+import 'settings_service.dart';
 import 'subtitle_matcher.dart';
+import 'thumbnail_service.dart';
+
+class SubtitleAttachResult {
+  const SubtitleAttachResult({
+    required this.attached,
+    required this.skipped,
+    required this.errors,
+  });
+
+  final int attached;
+  final int skipped;
+  final List<String> errors;
+}
 
 class LibraryService extends ChangeNotifier {
-  LibraryService();
+  LibraryService(this._settingsService, {ThumbnailService? thumbnailService})
+      : _thumbnailService = thumbnailService ?? ThumbnailService();
+
+  final SettingsService _settingsService;
+  final ThumbnailService _thumbnailService;
 
   static const _storageKey = 'video_library';
 
   final List<VideoItem> _items = [];
   bool _loaded = false;
+  LibraryScanProgress? _scanProgress;
   final _secureAccess = SecureFileAccess.instance;
 
   List<VideoItem> get items => List.unmodifiable(_items);
   bool get isLoaded => _loaded;
+  LibraryScanProgress? get scanProgress => _scanProgress;
+
+  void _setScanProgress(LibraryScanProgress? progress) {
+    _scanProgress = progress;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -36,6 +66,38 @@ class LibraryService extends ChangeNotifier {
 
     _loaded = true;
     notifyListeners();
+    unawaited(_backfillMissingThumbnails());
+  }
+
+  Future<void> _backfillMissingThumbnails() async {
+    var updated = false;
+
+    for (var index = 0; index < _items.length; index++) {
+      final item = _items[index];
+      final existing = item.thumbnailPath;
+      if (existing != null &&
+          File(existing).existsSync() &&
+          File(existing).lengthSync() > 0) {
+        continue;
+      }
+
+      try {
+        final thumbnailPath = await _generateThumbnailForItem(item);
+        if (thumbnailPath == null) {
+          continue;
+        }
+
+        _items[index] = item.copyWith(thumbnailPath: thumbnailPath);
+        updated = true;
+        notifyListeners();
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (updated) {
+      await _save();
+    }
   }
 
   Future<void> _save() async {
@@ -70,29 +132,119 @@ class LibraryService extends ChangeNotifier {
     );
   }
 
+  Future<VideoItem> _createVideoItem(
+    String normalizedPath, {
+    String? fileBookmark,
+    String? directoryBookmark,
+    String? zhPath,
+    String? enPath,
+  }) async {
+    final item = await _withBookmarks(
+      normalizedPath,
+      fileBookmark: fileBookmark,
+      directoryBookmark: directoryBookmark,
+      zhPath: zhPath,
+      enPath: enPath,
+    );
+    final thumbnailPath = await _generateThumbnailForItem(item);
+    if (thumbnailPath == null) {
+      return item;
+    }
+    return item.copyWith(thumbnailPath: thumbnailPath);
+  }
+
+  Future<String?> _generateThumbnailForItem(VideoItem item) async {
+    if (SecureFileAccess.enabled) {
+      final accessible = await ensureAccess(item);
+      if (!accessible) {
+        return null;
+      }
+      try {
+        return await _thumbnailService.generateForVideo(item.filePath);
+      } finally {
+        await releaseAccess();
+      }
+    }
+
+    if (!File(item.filePath).existsSync()) {
+      return null;
+    }
+    return _thumbnailService.generateForVideo(item.filePath);
+  }
+
+  bool _containsVideoPath(String path) {
+    return _items.any((item) => libraryPathsEqual(item.filePath, path));
+  }
+
   Future<int> addVideoPaths(
     List<String> paths, {
     String? directoryBookmark,
+    bool reportScanProgress = false,
   }) async {
-    var added = 0;
+    final pending = <String>[];
     for (final path in paths) {
       if (!SubtitleMatcher.isVideoFile(path)) {
         continue;
       }
-      if (_items.any((item) => item.filePath == path)) {
+      if (_containsVideoPath(path)) {
         continue;
       }
+      pending.add(path);
+    }
 
-      final match = SubtitleMatcher.findSubtitles(path);
+    if (reportScanProgress) {
+      _setScanProgress(
+        LibraryScanProgress(
+          phase: LibraryScanPhase.importingVideos,
+          current: 0,
+          total: pending.length,
+        ),
+      );
+    }
+
+    var added = 0;
+    for (var index = 0; index < pending.length; index++) {
+      final path = pending[index];
+      final normalizedPath = normalizeLibraryPath(path);
+
+      if (reportScanProgress) {
+        _setScanProgress(
+          LibraryScanProgress(
+            phase: LibraryScanPhase.importingVideos,
+            current: index,
+            total: pending.length,
+            currentLabel: normalizedPath,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      final match = SubtitleMatcher.findSubtitles(
+        normalizedPath,
+        rules: _settingsService.subtitleScanRules,
+      );
       _items.add(
-        await _withBookmarks(
-          path,
+        await _createVideoItem(
+          normalizedPath,
           directoryBookmark: directoryBookmark,
           zhPath: match.zhPath,
           enPath: match.enPath,
         ),
       );
       added++;
+
+      if (reportScanProgress) {
+        _setScanProgress(
+          LibraryScanProgress(
+            phase: LibraryScanPhase.importingVideos,
+            current: index + 1,
+            total: pending.length,
+            currentLabel: normalizedPath,
+          ),
+        );
+        notifyListeners();
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     if (added > 0) {
@@ -115,14 +267,18 @@ class LibraryService extends ChangeNotifier {
         if (!SubtitleMatcher.isVideoFile(file.path)) {
           continue;
         }
-        if (_items.any((item) => item.filePath == file.path)) {
+        if (_containsVideoPath(file.path)) {
           continue;
         }
 
-        final match = SubtitleMatcher.findSubtitles(file.path);
+        final normalizedPath = normalizeLibraryPath(file.path);
+        final match = SubtitleMatcher.findSubtitles(
+          normalizedPath,
+          rules: _settingsService.subtitleScanRules,
+        );
         _items.add(
-          await _withBookmarks(
-            file.path,
+          await _createVideoItem(
+            normalizedPath,
             fileBookmark: file.bookmark,
             zhPath: match.zhPath,
             enPath: match.enPath,
@@ -155,55 +311,95 @@ class LibraryService extends ChangeNotifier {
   }
 
   Future<int> pickAndScanDirectory() async {
-    if (MacosSecurePicker.isSupported) {
-      final picked = await MacosSecurePicker.pickDirectory();
-      if (picked == null) {
+    try {
+      if (MacosSecurePicker.isSupported) {
+        final picked = await MacosSecurePicker.pickDirectory();
+        if (picked == null) {
+          return 0;
+        }
+
+        await _secureAccess.stopAll();
+        final scanRoot = await _secureAccess.startAccess(
+          bookmark: picked.bookmark,
+          fallbackPath: picked.path,
+          isDirectory: true,
+        );
+        if (scanRoot == null) {
+          return 0;
+        }
+
+        return await _scanAndImportDirectory(
+          scanRoot,
+          directoryBookmark: picked.bookmark,
+        );
+      }
+
+      final directoryPath = await FilePicker.platform.getDirectoryPath();
+      if (directoryPath == null) {
         return 0;
       }
 
-      await _secureAccess.startAccess(
-        bookmark: picked.bookmark,
-        fallbackPath: picked.path,
-        isDirectory: true,
-      );
-
-      final videos = SubtitleMatcher.scanVideosInDirectory(picked.path);
-      final added = await addVideoPaths(
-        videos,
-        directoryBookmark: picked.bookmark,
-      );
+      final directoryBookmark =
+          await _secureAccess.createBookmark(directoryPath, isDirectory: true);
 
       await _secureAccess.stopAll();
-      return added;
-    }
 
-    final directoryPath = await FilePicker.platform.getDirectoryPath();
-    if (directoryPath == null) {
-      return 0;
-    }
+      if (SecureFileAccess.enabled && directoryBookmark != null) {
+        final scanRoot = await _secureAccess.startAccess(
+          bookmark: directoryBookmark,
+          fallbackPath: directoryPath,
+          isDirectory: true,
+        );
+        if (scanRoot == null) {
+          return 0;
+        }
 
-    final directoryBookmark =
-        await _secureAccess.createBookmark(directoryPath, isDirectory: true);
+        return await _scanAndImportDirectory(
+          scanRoot,
+          directoryBookmark: directoryBookmark,
+        );
+      }
 
-    if (SecureFileAccess.enabled && directoryBookmark != null) {
-      await _secureAccess.startAccess(
-        bookmark: directoryBookmark,
-        fallbackPath: directoryPath,
-        isDirectory: true,
+      return await _scanAndImportDirectory(
+        directoryPath,
+        directoryBookmark: directoryBookmark,
       );
+    } finally {
+      _setScanProgress(null);
+      if (SecureFileAccess.enabled) {
+        await _secureAccess.stopAll();
+      }
     }
+  }
 
-    final videos = SubtitleMatcher.scanVideosInDirectory(directoryPath);
-    final added = await addVideoPaths(
-      videos,
-      directoryBookmark: directoryBookmark,
+  Future<int> _scanAndImportDirectory(
+    String directoryPath, {
+    String? directoryBookmark,
+  }) async {
+    _setScanProgress(
+      const LibraryScanProgress(
+        phase: LibraryScanPhase.scanningDirectory,
+      ),
     );
 
-    if (SecureFileAccess.enabled && directoryBookmark != null) {
-      await _secureAccess.stopAll();
-    }
+    final videos = await SubtitleMatcher.scanVideosInDirectory(
+      directoryPath,
+      onProgress: (scannedEntries, foundVideos) {
+        _setScanProgress(
+          LibraryScanProgress(
+            phase: LibraryScanPhase.scanningDirectory,
+            scannedEntries: scannedEntries,
+            foundVideos: foundVideos,
+          ),
+        );
+      },
+    );
 
-    return added;
+    return addVideoPaths(
+      videos,
+      directoryBookmark: directoryBookmark,
+      reportScanProgress: true,
+    );
   }
 
   Future<void> updateSubtitles({
@@ -274,6 +470,10 @@ class LibraryService extends ChangeNotifier {
       return 0;
     }
     final before = _items.length;
+    final removing = _items.where((item) => ids.contains(item.id)).toList();
+    for (final item in removing) {
+      await _thumbnailService.deleteForVideo(item.thumbnailPath);
+    }
     _items.removeWhere((item) => ids.contains(item.id));
     final removed = before - _items.length;
     if (removed > 0) {
@@ -290,6 +490,64 @@ class LibraryService extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  Future<SubtitleAttachResult> attachUploadedSubtitles(
+    List<String> subtitlePaths, {
+    required SubtitleScanRules rules,
+  }) async {
+    var attached = 0;
+    var skipped = 0;
+    final errors = <String>[];
+
+    for (final subtitlePath in subtitlePaths) {
+      final info = SubtitleMatcher.parseSubtitleFileName(
+        subtitlePath,
+        rules: rules,
+      );
+      if (info == null) {
+        skipped++;
+        errors.add('${p.basename(subtitlePath)}: unsupported subtitle name');
+        continue;
+      }
+      if (info.language == null) {
+        skipped++;
+        errors.add('${p.basename(subtitlePath)}: ambiguous language suffix');
+        continue;
+      }
+
+      final matches = _items.where((item) {
+        return p.basenameWithoutExtension(item.filePath).toLowerCase() ==
+            info.videoBaseName.toLowerCase();
+      }).toList();
+
+      if (matches.isEmpty) {
+        skipped++;
+        errors.add('${p.basename(subtitlePath)}: no matching video in library');
+        continue;
+      }
+
+      for (final item in matches) {
+        if (info.language == SubtitleLanguage.zh) {
+          await updateSubtitles(
+            id: item.id,
+            zhSubPath: subtitlePath,
+          );
+        } else {
+          await updateSubtitles(
+            id: item.id,
+            enSubPath: subtitlePath,
+          );
+        }
+        attached++;
+      }
+    }
+
+    return SubtitleAttachResult(
+      attached: attached,
+      skipped: skipped,
+      errors: errors,
+    );
   }
 
   Future<bool> ensureAccess(VideoItem item) async {

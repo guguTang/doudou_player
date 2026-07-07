@@ -11,12 +11,18 @@ class DualSubtitleOverlay extends StatefulWidget {
     required this.mode,
     this.zhParser,
     this.enParser,
+    this.bottomPadding = 24,
+    this.fontSize = 16,
+    this.lineSpacing = 8,
   });
 
   final Player player;
   final SubtitleMode mode;
   final SubtitleParserService? zhParser;
   final SubtitleParserService? enParser;
+  final double bottomPadding;
+  final double fontSize;
+  final double lineSpacing;
 
   @override
   State<DualSubtitleOverlay> createState() => _DualSubtitleOverlayState();
@@ -62,19 +68,19 @@ class _DualSubtitleOverlayState extends State<DualSubtitleOverlay> {
       child: Align(
         alignment: Alignment.bottomCenter,
         child: SafeArea(
-          minimum: const EdgeInsets.fromLTRB(16, 0, 16, 72),
+          minimum: EdgeInsets.fromLTRB(16, 0, 16, widget.bottomPadding),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (enText != null && enText.isNotEmpty)
-                _SubtitleLine(text: enText),
+                _SubtitleLine(text: enText, fontSize: widget.fontSize),
               if (enText != null &&
                   enText.isNotEmpty &&
                   zhText != null &&
                   zhText.isNotEmpty)
-                const SizedBox(height: 8),
+                SizedBox(height: widget.lineSpacing),
               if (zhText != null && zhText.isNotEmpty)
-                _SubtitleLine(text: zhText),
+                _SubtitleLine(text: zhText, fontSize: widget.fontSize),
             ],
           ),
         ),
@@ -84,9 +90,10 @@ class _DualSubtitleOverlayState extends State<DualSubtitleOverlay> {
 }
 
 class _SubtitleLine extends StatelessWidget {
-  const _SubtitleLine({required this.text});
+  const _SubtitleLine({required this.text, required this.fontSize});
 
   final String text;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -99,9 +106,9 @@ class _SubtitleLine extends StatelessWidget {
       child: Text(
         text,
         textAlign: TextAlign.center,
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
-          fontSize: 16,
+          fontSize: fontSize,
           height: 1.35,
           shadows: [
             Shadow(blurRadius: 4, color: Colors.black, offset: Offset(1, 1)),

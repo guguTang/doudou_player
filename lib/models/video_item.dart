@@ -11,6 +11,7 @@ class VideoItem {
     this.directoryBookmark,
     this.zhSubBookmark,
     this.enSubBookmark,
+    this.thumbnailPath,
     DateTime? addedAt,
   }) : addedAt = addedAt ?? DateTime.now();
 
@@ -23,6 +24,7 @@ class VideoItem {
   final String? directoryBookmark;
   final String? zhSubBookmark;
   final String? enSubBookmark;
+  final String? thumbnailPath;
   final DateTime addedAt;
 
   factory VideoItem.fromPath(String filePath) {
@@ -43,10 +45,12 @@ class VideoItem {
     String? directoryBookmark,
     String? zhSubBookmark,
     String? enSubBookmark,
+    String? thumbnailPath,
     bool clearZhSubPath = false,
     bool clearEnSubPath = false,
     bool clearZhSubBookmark = false,
     bool clearEnSubBookmark = false,
+    bool clearThumbnailPath = false,
     DateTime? addedAt,
   }) {
     return VideoItem(
@@ -61,6 +65,8 @@ class VideoItem {
           clearZhSubBookmark ? null : (zhSubBookmark ?? this.zhSubBookmark),
       enSubBookmark:
           clearEnSubBookmark ? null : (enSubBookmark ?? this.enSubBookmark),
+      thumbnailPath:
+          clearThumbnailPath ? null : (thumbnailPath ?? this.thumbnailPath),
       addedAt: addedAt ?? this.addedAt,
     );
   }
@@ -76,6 +82,7 @@ class VideoItem {
       'directoryBookmark': directoryBookmark,
       'zhSubBookmark': zhSubBookmark,
       'enSubBookmark': enSubBookmark,
+      'thumbnailPath': thumbnailPath,
       'addedAt': addedAt.toIso8601String(),
     };
   }
@@ -91,6 +98,7 @@ class VideoItem {
       directoryBookmark: json['directoryBookmark'] as String?,
       zhSubBookmark: json['zhSubBookmark'] as String?,
       enSubBookmark: json['enSubBookmark'] as String?,
+      thumbnailPath: json['thumbnailPath'] as String?,
       addedAt: DateTime.parse(json['addedAt'] as String),
     );
   }

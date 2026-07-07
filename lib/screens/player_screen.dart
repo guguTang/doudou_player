@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -5,7 +7,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../models/subtitle_mode.dart';
 import '../models/video_item.dart';
 import '../services/library_service.dart';
+import '../services/player_chrome.dart';
 import '../services/secure_file_access.dart';
+import '../services/settings_service.dart';
 import '../services/subtitle_parser_service.dart';
 import '../widgets/dual_subtitle_overlay.dart';
 import '../widgets/player_controls.dart';
@@ -15,10 +19,12 @@ class PlayerScreen extends StatefulWidget {
     super.key,
     required this.item,
     required this.libraryService,
+    required this.settingsService,
   });
 
   final VideoItem item;
   final LibraryService libraryService;
+  final SettingsService settingsService;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -29,19 +35,47 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final VideoController _videoController;
   late VideoItem _item;
 
-  SubtitleMode _subtitleMode = SubtitleMode.off;
+  SubtitleMode _subtitleMode = SubtitleMode.both;
   SubtitleParserService? _zhParser;
   SubtitleParserService? _enParser;
   bool _loading = true;
   String? _error;
+  bool _isFullscreen = false;
+  bool _isLocked = false;
+  bool _overlayVisible = true;
+  Timer? _overlayHideTimer;
 
   @override
   void initState() {
     super.initState();
     _item = widget.item;
+    _subtitleMode = widget.settingsService.defaultSubtitleMode;
+    widget.settingsService.addListener(_onSettingsChanged);
     _player = Player();
     _videoController = VideoController(_player);
     _initialize();
+  }
+
+  void _onSettingsChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _subtitleMode = widget.settingsService.defaultSubtitleMode;
+    });
+  }
+
+  @override
+  void dispose() {
+    _overlayHideTimer?.cancel();
+    widget.settingsService.removeListener(_onSettingsChanged);
+    if (_isFullscreen) {
+      PlayerChrome.exitFullscreen();
+    }
+    if (!_released) {
+      _stopAndRelease();
+    }
+    super.dispose();
   }
 
   Future<void> _initialize() async {
@@ -102,9 +136,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _cycleSubtitleMode() {
+    final nextMode = _subtitleMode.next;
     setState(() {
-      _subtitleMode = _subtitleMode.next;
+      _subtitleMode = nextMode;
     });
+    widget.settingsService.setDefaultSubtitleMode(nextMode);
 
     if (_subtitleMode == SubtitleMode.chinese && _item.zhSubPath == null) {
       _showMissingSubtitleHint('中文字幕');
@@ -123,6 +159,88 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  void _scheduleOverlayHide() {
+    _overlayHideTimer?.cancel();
+    if (!_isFullscreen ||
+        _isLocked ||
+        !_overlayVisible ||
+        !PlayerChrome.supportsOrientationLock) {
+      return;
+    }
+    _overlayHideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _isFullscreen && !_isLocked) {
+        setState(() => _overlayVisible = false);
+      }
+    });
+  }
+
+  void _onControlsInteraction() {
+    if (_isFullscreen && _overlayVisible && !_isLocked) {
+      _scheduleOverlayHide();
+    }
+  }
+
+  void _onVideoTap() {
+    if (_isLocked) {
+      return;
+    }
+    if (_isFullscreen) {
+      setState(() => _overlayVisible = !_overlayVisible);
+      if (_overlayVisible) {
+        _scheduleOverlayHide();
+      } else {
+        _overlayHideTimer?.cancel();
+      }
+    }
+  }
+
+  Future<void> _enterFullscreen() async {
+    await PlayerChrome.enterFullscreen();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isFullscreen = true;
+      _overlayVisible = true;
+    });
+    _scheduleOverlayHide();
+  }
+
+  Future<void> _exitFullscreen() async {
+    _overlayHideTimer?.cancel();
+    await PlayerChrome.exitFullscreen();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isFullscreen = false;
+      _overlayVisible = true;
+    });
+  }
+
+  Future<void> _toggleFullscreen() async {
+    if (_isFullscreen) {
+      await _exitFullscreen();
+    } else {
+      await _enterFullscreen();
+    }
+  }
+
+  void _toggleLock() {
+    setState(() {
+      _isLocked = !_isLocked;
+      if (_isLocked) {
+        _overlayVisible = false;
+        _overlayHideTimer?.cancel();
+      } else if (_isFullscreen) {
+        _overlayVisible = true;
+        _scheduleOverlayHide();
+      } else {
+        _overlayVisible = true;
+      }
+    });
+  }
+
   bool _released = false;
 
   Future<void> _stopAndRelease() async {
@@ -136,13 +254,48 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _player.dispose();
   }
 
-  @override
-  void dispose() {
-    if (!_released) {
-      _stopAndRelease();
+  Future<void> _handleBack() async {
+    if (_isLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('屏幕已锁定，请先解锁')),
+      );
+      return;
     }
-    super.dispose();
+    if (_isFullscreen) {
+      await _exitFullscreen();
+      return;
+    }
+    await _stopAndRelease();
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
   }
+
+  PlayerControls _buildControls() {
+    return PlayerControls(
+      player: _player,
+      subtitleLabel: _subtitleMode.label,
+      onSubtitlePressed: _cycleSubtitleMode,
+      onPickZhSubtitle: () => _pickSubtitle(isChinese: true),
+      onPickEnSubtitle: () => _pickSubtitle(isChinese: false),
+      hasZhSubtitle: _item.zhSubPath != null,
+      hasEnSubtitle: _item.enSubPath != null,
+      isFullscreen: _isFullscreen,
+      isLocked: _isLocked,
+      onFullscreenToggle: _toggleFullscreen,
+      onLockToggle: _toggleLock,
+      onUserInteraction: _onControlsInteraction,
+    );
+  }
+
+  bool get _isDesktopFullscreen =>
+      _isFullscreen && !PlayerChrome.supportsOrientationLock;
+
+  bool get _showFullscreenChrome =>
+      !_isLocked && (_isDesktopFullscreen || _overlayVisible);
+
+  double get _subtitleBottomPadding =>
+      widget.settingsService.subtitleBottomPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -152,43 +305,97 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (didPop) {
           return;
         }
-        await _stopAndRelease();
-        if (context.mounted) {
-          Navigator.of(context).pop();
-        }
+        await _handleBack();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(),
-              Expanded(child: _buildVideoArea()),
-              PlayerControls(
-                player: _player,
-                subtitleLabel: _subtitleMode.label,
-                onSubtitlePressed: _cycleSubtitleMode,
-                onPickZhSubtitle: () => _pickSubtitle(isChinese: true),
-                onPickEnSubtitle: () => _pickSubtitle(isChinese: false),
-                hasZhSubtitle: _item.zhSubPath != null,
-                hasEnSubtitle: _item.enSubPath != null,
-              ),
-            ],
-          ),
-        ),
+        body: _buildBody(),
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildBody() {
+    if (_isFullscreen) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _onVideoTap,
+            child: _buildVideoArea(),
+          ),
+          if (_isLocked)
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              right: 12,
+              child: _buildUnlockButton(),
+            )
+          else if (_showFullscreenChrome) ...[
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                bottom: false,
+                child: _buildHeader(showFullscreenButton: false),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: _buildControls(),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: _buildHeader(showFullscreenButton: true),
+        ),
+        Expanded(
+          child: _buildVideoArea(),
+        ),
+        SafeArea(
+          top: false,
+          child: _buildControls(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUnlockButton() {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.45),
+      borderRadius: BorderRadius.circular(24),
+      child: IconButton(
+        tooltip: '解锁',
+        onPressed: _toggleLock,
+        icon: const Icon(Icons.lock, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildHeader({required bool showFullscreenButton}) {
     return Container(
-      color: Colors.black,
+      color: Colors.black.withValues(alpha: _isFullscreen ? 0.45 : 1),
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: _handleBack,
+            icon: Icon(
+              _isFullscreen ? Icons.fullscreen_exit : Icons.arrow_back,
+              color: Colors.white,
+            ),
+            tooltip: _isFullscreen ? '退出全屏' : '返回',
           ),
           Expanded(
             child: Text(
@@ -196,6 +403,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          if (showFullscreenButton)
+            IconButton(
+              tooltip: '全屏',
+              onPressed: _isLocked ? null : _enterFullscreen,
+              icon: const Icon(Icons.fullscreen, color: Colors.white),
+            ),
+          IconButton(
+            tooltip: _isLocked ? '解锁' : '锁定',
+            onPressed: _toggleLock,
+            icon: Icon(
+              _isLocked ? Icons.lock : Icons.lock_open,
+              color: Colors.white,
             ),
           ),
         ],
@@ -227,9 +448,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       fit: StackFit.expand,
       children: [
         Center(
-          child: Video(
-            controller: _videoController,
-            controls: NoVideoControls,
+          child: IgnorePointer(
+            child: Video(
+              controller: _videoController,
+              controls: NoVideoControls,
+            ),
           ),
         ),
         DualSubtitleOverlay(
@@ -237,6 +460,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           mode: _subtitleMode,
           zhParser: _zhParser,
           enParser: _enParser,
+          bottomPadding: _subtitleBottomPadding,
+          fontSize: widget.settingsService.subtitleFontSize,
+          lineSpacing: widget.settingsService.subtitleLineSpacing,
         ),
       ],
     );

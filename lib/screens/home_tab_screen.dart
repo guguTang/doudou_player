@@ -72,11 +72,16 @@ class HomeTabScreen extends StatelessWidget {
                   title: const Text('扫描文件夹'),
                   onTap: () async {
                     final added = await libraryService.pickAndScanDirectory();
-                    if (context.mounted && added > 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('扫描并添加 $added 个视频')),
-                      );
+                    if (!context.mounted) {
+                      return;
                     }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          added > 0 ? '扫描并添加 $added 个视频' : '未扫描到新视频',
+                        ),
+                      ),
+                    );
                   },
                 ),
               ],

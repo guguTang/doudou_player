@@ -2,13 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../models/video_item.dart';
 import '../services/library_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/video_list_tile.dart';
 import 'player_screen.dart';
 
 class LocalVideosScreen extends StatefulWidget {
-  const LocalVideosScreen({super.key, required this.libraryService});
+  const LocalVideosScreen({
+    super.key,
+    required this.libraryService,
+    required this.settingsService,
+  });
 
   final LibraryService libraryService;
+  final SettingsService settingsService;
 
   @override
   State<LocalVideosScreen> createState() => _LocalVideosScreenState();
@@ -98,6 +104,8 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
     }
     if (added > 0) {
       _showSnackBar('扫描并添加 $added 个视频');
+    } else {
+      _showSnackBar('未扫描到新视频');
     }
   }
 
@@ -113,6 +121,7 @@ class _LocalVideosScreenState extends State<LocalVideosScreen> {
         builder: (context) => PlayerScreen(
           item: item,
           libraryService: widget.libraryService,
+          settingsService: widget.settingsService,
         ),
       ),
     );

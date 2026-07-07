@@ -27,13 +27,14 @@ class SecureFileAccess {
     }
   }
 
-  Future<bool> startAccess({
+  /// 开始 security-scoped 访问。成功时返回已解析的绝对路径。
+  Future<String?> startAccess({
     String? bookmark,
     String? fallbackPath,
     bool isDirectory = false,
   }) async {
     if (!enabled || bookmark == null || bookmark.isEmpty) {
-      return !enabled;
+      return fallbackPath;
     }
 
     try {
@@ -45,14 +46,15 @@ class SecureFileAccess {
           await _bookmarks.startAccessingSecurityScopedResource(entity);
       if (granted) {
         _activeResources.add(entity);
+        return entity.absolute.path;
       }
-      return granted;
     } catch (_) {
-      if (fallbackPath != null) {
-        return File(fallbackPath).existsSync();
+      if (fallbackPath != null && FileSystemEntity.typeSync(fallbackPath) !=
+          FileSystemEntityType.notFound) {
+        return fallbackPath;
       }
-      return false;
     }
+    return null;
   }
 
   Future<void> startAccessForPaths({

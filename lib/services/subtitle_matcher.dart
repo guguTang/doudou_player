@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../models/subtitle_scan_rules.dart';
+
 class SubtitleMatch {
   const SubtitleMatch({this.zhPath, this.enPath});
 
@@ -9,23 +11,9 @@ class SubtitleMatch {
   final String? enPath;
 }
 
+enum SubtitleLanguage { zh, en }
+
 class SubtitleMatcher {
-  static const _zhSuffixes = [
-    '.zh.srt',
-    '.zh-cn.srt',
-    '.zh-tw.srt',
-    '.chs.srt',
-    '.cht.srt',
-    '.cn.srt',
-    '.chinese.srt',
-  ];
-
-  static const _enSuffixes = [
-    '.en.srt',
-    '.eng.srt',
-    '.english.srt',
-  ];
-
   static const _videoExtensions = {
     '.mp4',
     '.mkv',
@@ -41,7 +29,57 @@ class SubtitleMatcher {
     return _videoExtensions.contains(p.extension(filePath).toLowerCase());
   }
 
-  static SubtitleMatch findSubtitles(String videoPath) {
+  static bool isSubtitleFile(String filePath) {
+    return p.extension(filePath).toLowerCase() == '.srt';
+  }
+
+  static bool isAllowedUploadFile(String filePath) {
+    return isVideoFile(filePath) || isSubtitleFile(filePath);
+  }
+
+  /// Returns the video basename and language inferred from subtitle filename.
+  static ({String videoBaseName, SubtitleLanguage? language})? parseSubtitleFileName(
+    String filePath, {
+    SubtitleScanRules rules = SubtitleScanRules.defaults,
+  }) {
+    if (!isSubtitleFile(filePath)) {
+      return null;
+    }
+
+    final fileName = p.basename(filePath).toLowerCase();
+
+    for (final suffix in rules.zhSuffixes) {
+      if (fileName.endsWith(suffix)) {
+        return (
+          videoBaseName: fileName.substring(0, fileName.length - suffix.length),
+          language: SubtitleLanguage.zh,
+        );
+      }
+    }
+
+    for (final suffix in rules.enSuffixes) {
+      if (fileName.endsWith(suffix)) {
+        return (
+          videoBaseName: fileName.substring(0, fileName.length - suffix.length),
+          language: SubtitleLanguage.en,
+        );
+      }
+    }
+
+    if (fileName.endsWith('.srt')) {
+      return (
+        videoBaseName: p.basenameWithoutExtension(fileName),
+        language: null,
+      );
+    }
+
+    return null;
+  }
+
+  static SubtitleMatch findSubtitles(
+    String videoPath, {
+    SubtitleScanRules rules = SubtitleScanRules.defaults,
+  }) {
     final dir = p.dirname(videoPath);
     final baseName = p.basenameWithoutExtension(videoPath);
     final directory = Directory(dir);
@@ -53,7 +91,7 @@ class SubtitleMatcher {
     String? zhPath;
     String? enPath;
 
-    for (final suffix in _zhSuffixes) {
+    for (final suffix in rules.zhSuffixes) {
       final candidate = p.join(dir, '$baseName$suffix');
       if (File(candidate).existsSync()) {
         zhPath = candidate;
@@ -61,7 +99,7 @@ class SubtitleMatcher {
       }
     }
 
-    for (final suffix in _enSuffixes) {
+    for (final suffix in rules.enSuffixes) {
       final candidate = p.join(dir, '$baseName$suffix');
       if (File(candidate).existsSync()) {
         enPath = candidate;
@@ -83,18 +121,38 @@ class SubtitleMatcher {
     return SubtitleMatch(zhPath: zhPath, enPath: enPath);
   }
 
-  static List<String> scanVideosInDirectory(String directoryPath) {
+  static Future<List<String>> scanVideosInDirectory(
+    String directoryPath, {
+    void Function(int scannedEntries, int foundVideos)? onProgress,
+  }) async {
     final root = Directory(directoryPath);
     if (!root.existsSync()) {
       return [];
     }
 
     final results = <String>[];
-    for (final entity in root.listSync(recursive: true, followLinks: false)) {
-      if (entity is File && isVideoFile(entity.path)) {
-        results.add(entity.path);
+    var scannedEntries = 0;
+
+    try {
+      await for (final entity in root.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        scannedEntries++;
+        if (entity is File && isVideoFile(entity.path)) {
+          results.add(entity.path);
+        }
+
+        if (scannedEntries % 80 == 0) {
+          onProgress?.call(scannedEntries, results.length);
+          await Future<void>.delayed(Duration.zero);
+        }
       }
+    } catch (_) {
+      return [];
     }
+
+    onProgress?.call(scannedEntries, results.length);
     results.sort();
     return results;
   }

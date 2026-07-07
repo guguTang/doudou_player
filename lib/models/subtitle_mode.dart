@@ -21,4 +21,24 @@ enum SubtitleMode {
         return '双语';
     }
   }
+
+  String get settingsLabel {
+    switch (this) {
+      case SubtitleMode.off:
+        return '关闭';
+      case SubtitleMode.chinese:
+        return '仅中文';
+      case SubtitleMode.english:
+        return '仅英文';
+      case SubtitleMode.both:
+        return '中英双语';
+    }
+  }
+
+  static SubtitleMode fromName(String? name) {
+    return SubtitleMode.values.firstWhere(
+      (mode) => mode.name == name,
+      orElse: () => SubtitleMode.both,
+    );
+  }
 }
