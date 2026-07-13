@@ -8,7 +8,7 @@
 |------|------|
 | [features.md](features.md) | **总览**：全部用户功能、屏幕、服务关系 |
 | [architecture.md](architecture.md) | 启动流程、服务依赖、目录结构、测试 |
-| [video-library.md](video-library.md) | 视频库、扫描、缩略图、路径规范化 |
+| [video-library.md](video-library.md) | 视频库、合集/文件夹、扫描、缩略图、路径规范化 |
 | [subtitles.md](subtitles.md) | 字幕模式、匹配、解析、叠加显示 |
 | [player.md](player.md) | 播放器 UI、全屏、控制层、chrome |
 | [settings.md](settings.md) | 全部用户偏好与持久化 key |
@@ -21,8 +21,9 @@
 
 | 功能区域 | 主要代码路径 | 需更新的文档 |
 |----------|-------------|-------------|
-| 导航 / 首页 / 本地视频列表 | `lib/screens/main_shell.dart`, `home_tab_screen.dart`, `local_videos_screen.dart` | `features.md` |
+| 导航 / 首页 / 本地视频列表 | `lib/screens/main_shell.dart`, `home_tab_screen.dart`, `local_videos_screen.dart`, `collection_detail_screen.dart` | `features.md` |
 | 视频库增删扫 | `lib/services/library_service.dart`, `lib/models/video_item.dart` | `features.md`, `video-library.md` |
+| 合集 / 文件夹 | `lib/services/collection_service.dart`, `lib/models/video_collection.dart`, `collection_list_tile.dart` | `features.md`, `video-library.md` |
 | 路径去重 | `lib/services/library_path.dart` | `video-library.md` |
 | 扫描进度 UI | `lib/widgets/library_scan_progress_overlay.dart` | `features.md`, `video-library.md` |
 | 缩略图 | `lib/services/thumbnail_*.dart`, `lib/widgets/thumbnail_capture_host.dart` | `video-library.md` |

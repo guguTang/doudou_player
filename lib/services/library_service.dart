@@ -16,6 +16,7 @@ import 'secure_file_access.dart';
 import 'settings_service.dart';
 import 'subtitle_matcher.dart';
 import 'thumbnail_service.dart';
+import 'collection_service.dart';
 
 class SubtitleAttachResult {
   const SubtitleAttachResult({
@@ -30,11 +31,16 @@ class SubtitleAttachResult {
 }
 
 class LibraryService extends ChangeNotifier {
-  LibraryService(this._settingsService, {ThumbnailService? thumbnailService})
-      : _thumbnailService = thumbnailService ?? ThumbnailService();
+  LibraryService(
+    this._settingsService, {
+    ThumbnailService? thumbnailService,
+    CollectionService? collectionService,
+  })  : _thumbnailService = thumbnailService ?? ThumbnailService(),
+        _collectionService = collectionService;
 
   final SettingsService _settingsService;
   final ThumbnailService _thumbnailService;
+  final CollectionService? _collectionService;
 
   static const _storageKey = 'video_library';
 
@@ -395,11 +401,28 @@ class LibraryService extends ChangeNotifier {
       },
     );
 
-    return addVideoPaths(
+    final added = await addVideoPaths(
       videos,
       directoryBookmark: directoryBookmark,
       reportScanProgress: true,
     );
+
+    final collectionService = _collectionService;
+    if (collectionService != null && videos.isNotEmpty) {
+      final videoIds = videos
+          .map(normalizeLibraryPath)
+          .where(_containsVideoPath)
+          .toList();
+      if (videoIds.isNotEmpty) {
+        await collectionService.registerScanRootCollection(
+          directoryPath,
+          directoryBookmark,
+          videoIds,
+        );
+      }
+    }
+
+    return added;
   }
 
   Future<void> updateSubtitles({
@@ -479,6 +502,7 @@ class LibraryService extends ChangeNotifier {
     if (removed > 0) {
       await _save();
       notifyListeners();
+      await _collectionService?.pruneVideoIds(_items.map((item) => item.id).toSet());
     }
     return removed;
   }

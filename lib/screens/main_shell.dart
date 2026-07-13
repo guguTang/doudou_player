@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/collection_service.dart';
 import '../services/lan_upload_service.dart';
 import '../services/library_service.dart';
 import '../services/settings_service.dart';
@@ -12,11 +13,13 @@ class MainShell extends StatefulWidget {
   const MainShell({
     super.key,
     required this.libraryService,
+    required this.collectionService,
     required this.settingsService,
     required this.lanUploadService,
   });
 
   final LibraryService libraryService;
+  final CollectionService collectionService;
   final SettingsService settingsService;
   final LanUploadService lanUploadService;
 
@@ -31,11 +34,13 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     widget.libraryService.addListener(_onLibraryChanged);
+    widget.collectionService.addListener(_onLibraryChanged);
   }
 
   @override
   void dispose() {
     widget.libraryService.removeListener(_onLibraryChanged);
+    widget.collectionService.removeListener(_onLibraryChanged);
     super.dispose();
   }
 
@@ -54,6 +59,7 @@ class _MainShellState extends State<MainShell> {
       ),
       LocalVideosScreen(
         libraryService: widget.libraryService,
+        collectionService: widget.collectionService,
         settingsService: widget.settingsService,
       ),
       SettingsScreen(

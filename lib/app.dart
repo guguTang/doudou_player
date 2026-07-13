@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/main_shell.dart';
+import 'services/collection_service.dart';
 import 'services/lan_upload_service.dart';
 import 'services/library_service.dart';
 import 'services/settings_service.dart';
@@ -15,8 +16,11 @@ class DoudouPlayerApp extends StatefulWidget {
 
 class _DoudouPlayerAppState extends State<DoudouPlayerApp> {
   final _settingsService = SettingsService();
-  late final LibraryService _libraryService =
-      LibraryService(_settingsService);
+  final _collectionService = CollectionService();
+  late final LibraryService _libraryService = LibraryService(
+    _settingsService,
+    collectionService: _collectionService,
+  );
   late final LanUploadService _lanUploadService = LanUploadService(
     libraryService: _libraryService,
     settingsService: _settingsService,
@@ -30,6 +34,7 @@ class _DoudouPlayerAppState extends State<DoudouPlayerApp> {
 
   Future<void> _bootstrap() async {
     await _settingsService.load();
+    await _collectionService.load();
     await _libraryService.load();
     await _lanUploadService.initialize();
   }
@@ -55,6 +60,7 @@ class _DoudouPlayerAppState extends State<DoudouPlayerApp> {
         ),
         home: MainShell(
           libraryService: _libraryService,
+          collectionService: _collectionService,
           settingsService: _settingsService,
           lanUploadService: _lanUploadService,
         ),

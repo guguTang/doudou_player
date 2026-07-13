@@ -14,10 +14,14 @@
 
 ### 本地视频
 
-- 列表展示：缩略图、标题、中/英文字幕是否已关联（✓/✗）
-- 点击播放；FAB 添加视频或扫描文件夹
-- 长按：多选、选择中/英文字幕、从列表移除
-- 多选批量移除（**不删除磁盘上的原文件**）
+- 顶部分段切换：**全部** / **合集** / **文件夹**
+- **全部**：平铺列表，缩略图、标题、中/英文字幕是否已关联（✓/✗）
+- **合集**：用户自定义合集列表，可创建、重命名、删除；点进查看合集内视频
+- **文件夹**：扫描文件夹导入时自动创建的源目录分组
+- 点击播放；FAB 添加视频或扫描文件夹（合集视图下 FAB 为「新建合集」）
+- 长按：多选、添加到合集、选择中/英文字幕、从列表移除
+- 多选：批量添加到合集、批量移除（**不删除磁盘上的原文件**）
+- 合集详情：可从合集移除视频（不删库）、手动合集支持重命名/删除
 
 → 详见 [video-library.md](video-library.md)
 
@@ -53,9 +57,10 @@
 
 ```
 MainShell（底部三 Tab）
-├── [0] HomeTabScreen      首页
-├── [1] LocalVideosScreen  本地视频 → PlayerScreen（push）
-└── [2] SettingsScreen     设置
+├── [0] HomeTabScreen           首页
+├── [1] LocalVideosScreen       本地视频（全部/合集/文件夹）
+│       └── CollectionDetailScreen → PlayerScreen（push）
+└── [2] SettingsScreen          设置
 ```
 
 全局遮罩：`LibraryScanProgressOverlay`（文件夹扫描/导入进度）
@@ -65,6 +70,7 @@ MainShell（底部三 Tab）
 | 服务 | 职责 | 文档 |
 |------|------|------|
 | `LibraryService` | 视频库 CRUD、扫描、缩略图、沙盒访问 | [video-library.md](video-library.md) |
+| `CollectionService` | 合集/文件夹 CRUD、扫描注册、引用清理 | [video-library.md](video-library.md) |
 | `SettingsService` | 用户偏好持久化 | [settings.md](settings.md) |
 | `LanUploadService` | 局域网 HTTP 上传 | [lan-upload.md](lan-upload.md) |
 | `SubtitleMatcher` | 字幕文件名匹配 | [subtitles.md](subtitles.md) |

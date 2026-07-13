@@ -3,8 +3,9 @@
 ## 设计
 
 - **引用式索引**：视频文件保留在用户原路径，应用只记录路径与元数据
-- **持久化**：`SharedPreferences`，key=`video_library`
-- **排序**：按 `addedAt` 倒序（最新在前）
+- **持久化**：`SharedPreferences`，key=`video_library`（视频）、`video_collections`（合集）
+- **排序**：视频按 `addedAt` 倒序（最新在前）；合集按创建时间
+- **组织方式**：扁平视频索引 + 可选合集/文件夹分组（M:N 关系）
 
 ## VideoItem 字段
 
@@ -20,7 +21,23 @@
 
 模型：`lib/models/video_item.dart`
 
+## VideoCollection 字段
+
+| 字段 | 说明 |
+|------|------|
+| `id` | manual：时间戳 ID；scanRoot：规范化扫描根路径 |
+| `name` | 显示名称（manual 用户命名；scanRoot 为目录 basename） |
+| `type` | `manual`（自定义合集）或 `scanRoot`（扫描源文件夹） |
+| `videoIds` | 关联的 `VideoItem.id` 列表 |
+| `createdAt` | 创建时间 |
+| `scanRootPath` | 仅 scanRoot，规范化绝对路径 |
+| `directoryBookmark` | 仅 scanRoot，macOS 沙盒 bookmark |
+
+模型：`lib/models/video_collection.dart`
+
 ## 用户操作 → API
+
+### 视频库（LibraryService）
 
 | 操作 | 方法 |
 |------|------|
@@ -34,6 +51,25 @@
 | LAN 字幕关联 | `attachUploadedSubtitles()` |
 
 服务：`lib/services/library_service.dart`
+
+### 合集（CollectionService）
+
+| 操作 | 方法 |
+|------|------|
+| 创建自定义合集 | `createManualCollection(name)` |
+| 重命名合集 | `renameCollection(id, name)`（仅 manual） |
+| 删除合集 | `deleteCollection(id)` |
+| 添加视频到合集 | `addVideosToCollection(id, videoIds)` |
+| 从合集移除视频 | `removeVideosFromCollection(id, videoIds)` |
+| 扫描后注册文件夹 | `registerScanRootCollection(rootPath, bookmark, videoIds)` |
+| 库移除后清理引用 | `pruneVideoIds(validIds)` |
+| 获取合集内视频 | `videosInCollection(id, libraryService)` |
+
+服务：`lib/services/collection_service.dart`
+
+扫描文件夹完成后，`LibraryService` 自动调用 `registerScanRootCollection`，将该次扫描发现且已在库中的视频关联到对应文件夹合集。
+
+## 合集与文件夹行为
 
 ## 支持的视频扩展名
 
@@ -60,6 +96,19 @@
   - `scanningDirectory` — 已检查条目数、已发现视频数
   - `importingVideos` — 当前/总数 + 文件名
 - UI：`lib/widgets/library_scan_progress_overlay.dart`
+- 扫描完成后自动创建/更新 **scanRoot** 类型文件夹合集
+- 重复扫描同一目录：合并 videoIds 到已有文件夹合集
+
+## 合集边界行为
+
+| 场景 | 行为 |
+|------|------|
+| 重复扫描同一目录 | 合并到已有 scanRoot 合集 |
+| 从库移除视频 | 自动从所有合集中 prune |
+| 从合集移除视频 | 仅删关联，视频仍在「全部」 |
+| 删除合集 | 仅删分组元数据，视频仍在库中 |
+| 单独添加视频 / LAN 上传 | 仅出现在「全部」，需手动加入自定义合集 |
+| 升级前已有视频 | 不做回溯分组，仅新扫描产生文件夹合集 |
 
 ## 缩略图
 
@@ -82,12 +131,16 @@
 ## 相关文件
 
 - `lib/services/library_service.dart`
+- `lib/services/collection_service.dart`
 - `lib/services/library_path.dart`
 - `lib/models/video_item.dart`
+- `lib/models/video_collection.dart`
 - `lib/models/library_scan_progress.dart`
 - `lib/screens/local_videos_screen.dart`
+- `lib/screens/collection_detail_screen.dart`
 - `lib/screens/home_tab_screen.dart`
 - `lib/widgets/video_list_tile.dart`
+- `lib/widgets/collection_list_tile.dart`
 - `lib/services/thumbnail_service.dart`
 - `lib/widgets/thumbnail_capture_host.dart`
 

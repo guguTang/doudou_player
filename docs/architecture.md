@@ -9,6 +9,7 @@ main.dart
 
 app.dart
   SettingsService.load()
+  CollectionService.load()
   LibraryService.load()
   LanUploadService.initialize()   // autoStart 时启动 HTTP
 ```
@@ -18,11 +19,13 @@ app.dart
 ```mermaid
 flowchart TB
   app[app.dart] --> settings[SettingsService]
+  app --> collections[CollectionService]
   app --> library[LibraryService]
   app --> lan[LanUploadService]
   app --> thumbHost[ThumbnailCaptureHost]
 
   library --> settings
+  library --> collections
   library --> matcher[SubtitleMatcher]
   library --> thumb[ThumbnailService]
   library --> secure[SecureFileAccess]
@@ -68,6 +71,7 @@ test_data/            # 测试用字幕样例
 | Key | 内容 | 服务 |
 |-----|------|------|
 | `video_library` | `VideoItem[]` JSON | `LibraryService` |
+| `video_collections` | `VideoCollection[]` JSON | `CollectionService` |
 | `default_subtitle_mode` 等 | 用户偏好 | `SettingsService` |
 | `subtitle_scan_rules` | 字幕后缀规则 JSON | `SettingsService` |
 | `lan_upload_settings` | 局域网传输配置 JSON | `SettingsService` |
@@ -91,6 +95,7 @@ test_data/            # 测试用字幕样例
 | 文件 | 覆盖 |
 |------|------|
 | `test/library_service_test.dart` | 路径规范化、去重 |
+| `test/collection_service_test.dart` | 合集 CRUD、扫描注册、prune |
 | `test/subtitle_matcher_test.dart` | 字幕匹配 |
 | `test/settings_service_test.dart` | 设置持久化 |
 | `test/thumbnail_service_test.dart` | 缩略图时间策略 |
